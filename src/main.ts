@@ -44,12 +44,40 @@ const playerMarker = leaflet.marker(OAKES_CLASSROOM);
 playerMarker.bindTooltip("That's you!");
 playerMarker.addTo(map);
 
-// Display the player's coins
-let playerCoins = 0;
+// Display the player's points
+const playerCoins = 0;
+let heldCoins = 0;
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!; // element `statusPanel` is defined in index.html
-statusPanel.innerHTML = "No coins yet...";
 
-// Add caches to the map by cell numbers
+// Function to update the status panel
+function updateStatusPanel() {
+  statusPanel.innerHTML =
+    `${playerCoins} coins accumulated | Holding: ${heldCoins}`;
+}
+updateStatusPanel();
+
+// Store the initial coin values for each cache in an object
+const cacheValues: { [key: string]: number } = {};
+
+// Function to get the initial or stored coin value for a cache
+function getCacheValue(i: number, j: number): number {
+  const key = `${i},${j}`;
+  if (!(key in cacheValues)) {
+    // If this cache has not been initialized, assign a random value
+    cacheValues[key] = Math.floor(
+      luck([i, j, "initialValue"].toString()) * 100,
+    );
+  }
+  return cacheValues[key];
+}
+
+// Function to update the coin value of a cache
+function updateCacheValue(i: number, j: number, value: number) {
+  const key = `${i},${j}`;
+  cacheValues[key] = value;
+}
+
+// Function to add caches to the map by cell numbers
 function spawnCache(i: number, j: number) {
   // Convert cell numbers into lat/lng bounds
   const origin = OAKES_CLASSROOM;
@@ -64,28 +92,45 @@ function spawnCache(i: number, j: number) {
 
   // Handle interactions with the cache
   rect.bindPopup(() => {
-    // Each cache has a random coin value, mutable by the player
-    let coinValue = Math.floor(luck([i, j, "initialValue"].toString()) * 100);
+    // Retrieve or initialize the cache's coin value
+    let coinValue = getCacheValue(i, j);
 
-    // The popup offers a description and button
+    // The popup offers a description and buttons
     const popupDiv = document.createElement("div");
     popupDiv.innerHTML = `
-                <div>There is a cache here at "${i},${j}". It has value <span id="value">${coinValue}</span>.</div>
-                <button id="collect">Collect</button>`;
+                <div>Cache "${i},${j}" has value <span id="value">${coinValue}</span>.</div>
+                <button id="collect">Collect</button>
+                <button id="deposit">Deposit</button>`;
 
-    // Clicking the button decrements the cache's value and increments the player's points
-    popupDiv
-      .querySelector<HTMLButtonElement>("#collect")!
-      .addEventListener("click", () => {
-        // Ensure coinValue does not go below 0
+    // Collect button: transfer coins from the cache to held coins
+    popupDiv.querySelector<HTMLButtonElement>("#collect")!.addEventListener(
+      "click",
+      () => {
         if (coinValue > 0) {
-          coinValue--;
+          heldCoins += 1;
+          coinValue -= 1;
+          updateCacheValue(i, j, coinValue); // Update the stored value
           popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
             coinValue.toString();
-          playerCoins++;
-          statusPanel.innerHTML = `${playerCoins} coins accumulated`;
+          updateStatusPanel();
         }
-      });
+      },
+    );
+
+    // Deposit button: transfer coins from held coins to the cache
+    popupDiv.querySelector<HTMLButtonElement>("#deposit")!.addEventListener(
+      "click",
+      () => {
+        if (heldCoins > 0) {
+          heldCoins -= 1;
+          coinValue += 1;
+          updateCacheValue(i, j, coinValue); // Update the stored value
+          popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
+            coinValue.toString();
+          updateStatusPanel();
+        }
+      },
+    );
 
     return popupDiv;
   });
