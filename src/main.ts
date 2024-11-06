@@ -77,11 +77,14 @@ function spawnCache(i: number, j: number) {
     popupDiv
       .querySelector<HTMLButtonElement>("#collect")!
       .addEventListener("click", () => {
-        coinValue--;
-        popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML = coinValue
-          .toString();
-        playerCoins++;
-        statusPanel.innerHTML = `${playerCoins} coins accumulated`;
+        // Ensure coinValue does not go below 0
+        if (coinValue > 0) {
+          coinValue--;
+          popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
+            coinValue.toString();
+          playerCoins++;
+          statusPanel.innerHTML = `${playerCoins} coins accumulated`;
+        }
       });
 
     return popupDiv;
