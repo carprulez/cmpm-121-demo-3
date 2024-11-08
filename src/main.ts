@@ -11,18 +11,18 @@ import "./leafletWorkaround.ts";
 // Deterministic random number generator
 import luck from "./luck.ts";
 
-// Location of our classroom (as identified on Google Maps)
-const OAKES_CLASSROOM = leaflet.latLng(36.98949379578401, -122.06277128548504);
+// Null Island coordinates
+const NULL_ISLAND = { lat: 0, lng: 0 };
 
 // Tunable gameplay parameters
 const GAMEPLAY_ZOOM_LEVEL = 19;
-const TILE_DEGREES = 1e-4;
+const TILE_DEGREES = 1e-4; // Grid cell size in degrees
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
 
-// Create the map (element with id "map" is defined in index.html)
+// Initialize the map centered on Null Island
 const map = leaflet.map(document.getElementById("map")!, {
-  center: OAKES_CLASSROOM,
+  center: NULL_ISLAND,
   zoom: GAMEPLAY_ZOOM_LEVEL,
   minZoom: GAMEPLAY_ZOOM_LEVEL,
   maxZoom: GAMEPLAY_ZOOM_LEVEL,
@@ -39,95 +39,48 @@ leaflet
   })
   .addTo(map);
 
-// Add a marker to represent the player
-const playerMarker = leaflet.marker(OAKES_CLASSROOM);
-playerMarker.bindTooltip("That's you!");
-playerMarker.addTo(map);
+// Player's coin count
+let playerCoins = 0;
+const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
+statusPanel.innerHTML = "No coins yet...";
 
-// Display the player's points
-const playerCoins = 0;
-let heldCoins = 0;
-const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!; // element `statusPanel` is defined in index.html
-
-// Function to update the status panel
-function updateStatusPanel() {
-  statusPanel.innerHTML =
-    `${playerCoins} coins accumulated | Holding: ${heldCoins}`;
-}
-updateStatusPanel();
-
-// Store the initial coin values for each cache in an object
-const cacheValues: { [key: string]: number } = {};
-
-// Function to get the initial or stored coin value for a cache
-function getCacheValue(i: number, j: number): number {
-  const key = `${i},${j}`;
-  if (!(key in cacheValues)) {
-    // If this cache has not been initialized, assign a random value
-    cacheValues[key] = Math.floor(
-      luck([i, j, "initialValue"].toString()) * 100,
-    );
-  }
-  return cacheValues[key];
+// Function to convert latitude/longitude to grid cell coordinates anchored at Null Island
+function _latLngToCell(lat: number, lng: number) {
+  const i = Math.floor(lat / TILE_DEGREES);
+  const j = Math.floor(lng / TILE_DEGREES);
+  return { i, j };
 }
 
-// Function to update the coin value of a cache
-function updateCacheValue(i: number, j: number, value: number) {
-  const key = `${i},${j}`;
-  cacheValues[key] = value;
-}
-
-// Function to add caches to the map by cell numbers
+// Spawn a cache based on cell coordinates
 function spawnCache(i: number, j: number) {
-  // Convert cell numbers into lat/lng bounds
-  const origin = OAKES_CLASSROOM;
   const bounds = leaflet.latLngBounds([
-    [origin.lat + i * TILE_DEGREES, origin.lng + j * TILE_DEGREES],
-    [origin.lat + (i + 1) * TILE_DEGREES, origin.lng + (j + 1) * TILE_DEGREES],
+    [NULL_ISLAND.lat + i * TILE_DEGREES, NULL_ISLAND.lng + j * TILE_DEGREES],
+    [
+      NULL_ISLAND.lat + (i + 1) * TILE_DEGREES,
+      NULL_ISLAND.lng + (j + 1) * TILE_DEGREES,
+    ],
   ]);
 
-  // Add a rectangle to the map to represent the cache
   const rect = leaflet.rectangle(bounds);
   rect.addTo(map);
 
-  // Handle interactions with the cache
+  // Bind a popup with a coin value to the cache
   rect.bindPopup(() => {
-    // Retrieve or initialize the cache's coin value
-    let coinValue = getCacheValue(i, j);
-
-    // The popup offers a description and buttons
+    let coinValue = Math.floor(luck([i, j, "initialValue"].toString()) * 100);
     const popupDiv = document.createElement("div");
     popupDiv.innerHTML = `
-                <div>Cache "${i},${j}" has value <span id="value">${coinValue}</span>.</div>
-                <button id="collect">Collect</button>
-                <button id="deposit">Deposit</button>`;
+      <div>Cache at "${i},${j}" with value <span id="value">${coinValue}</span>.</div>
+      <button id="collect">Collect</button>`;
 
-    // Collect button: transfer coins from the cache to held coins
     popupDiv.querySelector<HTMLButtonElement>("#collect")!.addEventListener(
       "click",
       () => {
         if (coinValue > 0) {
-          heldCoins += 1;
-          coinValue -= 1;
-          updateCacheValue(i, j, coinValue); // Update the stored value
+          coinValue--;
+          playerCoins++;
           popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
             coinValue.toString();
-          updateStatusPanel();
-        }
-      },
-    );
-
-    // Deposit button: transfer coins from held coins to the cache
-    popupDiv.querySelector<HTMLButtonElement>("#deposit")!.addEventListener(
-      "click",
-      () => {
-        if (heldCoins > 0) {
-          heldCoins -= 1;
-          coinValue += 1;
-          updateCacheValue(i, j, coinValue); // Update the stored value
-          popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-            coinValue.toString();
-          updateStatusPanel();
+          statusPanel.innerHTML = `${playerCoins} coins accumulated`;
         }
       },
     );
@@ -136,10 +89,9 @@ function spawnCache(i: number, j: number) {
   });
 }
 
-// Look around the player's neighborhood for caches to spawn
+// Populate the map with caches around the player’s location in the neighborhood
 for (let i = -NEIGHBORHOOD_SIZE; i < NEIGHBORHOOD_SIZE; i++) {
   for (let j = -NEIGHBORHOOD_SIZE; j < NEIGHBORHOOD_SIZE; j++) {
-    // If location i,j is lucky enough, spawn a cache!
     if (luck([i, j].toString()) < CACHE_SPAWN_PROBABILITY) {
       spawnCache(i, j);
     }
