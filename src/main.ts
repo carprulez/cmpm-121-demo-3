@@ -36,8 +36,15 @@ let playerCoins = 0;
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 statusPanel.innerHTML = "No coins yet...";
 
-// Store cache coin values in a global map
+// Store cache coin values and coins per cache in a global map
 const cacheCoinValues = new Map<string, number>();
+const coinMap = new Map<string, Coin[]>();
+
+interface Coin {
+  i: number;
+  j: number;
+  serial: number;
+}
 
 function getCacheKey(i: number, j: number): string {
   return `${i},${j}`;
@@ -53,8 +60,13 @@ function spawnCache(i: number, j: number) {
   const rect = leaflet.rectangle(bounds);
   rect.addTo(map);
 
-  // Set initial coin value for the cache if not already set
+  // Initialize the coin array for this cache if it doesn't exist
   const cacheKey = getCacheKey(i, j);
+  if (!coinMap.has(cacheKey)) {
+    coinMap.set(cacheKey, []);
+  }
+
+  // Set initial coin value for the cache if not already set
   if (!cacheCoinValues.has(cacheKey)) {
     cacheCoinValues.set(
       cacheKey,
@@ -64,12 +76,21 @@ function spawnCache(i: number, j: number) {
 
   rect.bindPopup(() => {
     let coinValue = cacheCoinValues.get(cacheKey)!;
+    const coins = coinMap.get(cacheKey)!;
 
     const popupDiv = document.createElement("div");
     popupDiv.innerHTML = `
-                <div>Cache at "${i},${j}". Value: <span id="value">${coinValue}</span>.</div>
-                <button id="collect">Collect</button>
-                <button id="deposit">Deposit</button>`;
+      <div>Cache at "${i},${j}". Value: <span id="value">${coinValue}</span>.</div>
+      <div>Coins:</div>
+      <ul id="coinList">
+        ${
+      coins
+        .map((coin) => `<li>${coin.i}:${coin.j}#${coin.serial}</li>`)
+        .join("")
+    }
+      </ul>
+      <button id="collect">Collect Coin</button>
+      <button id="deposit">Deposit Coin</button>`;
 
     popupDiv.querySelector<HTMLButtonElement>("#collect")!.addEventListener(
       "click",
@@ -78,8 +99,20 @@ function spawnCache(i: number, j: number) {
           coinValue--;
           playerCoins++;
           cacheCoinValues.set(cacheKey, coinValue);
+
+          // Add a new coin with a unique serial number
+          const newCoin: Coin = { i, j, serial: coins.length };
+          coins.push(newCoin);
+
+          // Update coin list and display
           popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
             coinValue.toString();
+          const coinList = popupDiv.querySelector<HTMLUListElement>(
+            "#coinList",
+          )!;
+          coinList.innerHTML +=
+            `<li>${newCoin.i}:${newCoin.j}#${newCoin.serial}</li>`;
+
           statusPanel.innerHTML = `${playerCoins} coins accumulated`;
         }
       },
