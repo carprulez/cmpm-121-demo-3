@@ -4,12 +4,16 @@ import "leaflet/dist/leaflet.css";
 import "./style.css";
 import "./leafletWorkaround.ts";
 import luck from "./luck.ts";
+import { Board } from "./board.ts"; // Import the Board class
 
 const NULL_ISLAND = leaflet.latLng(0, 0);
 const TILE_DEGREES = 1e-4;
 const GAMEPLAY_ZOOM_LEVEL = 19;
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
+
+// Create an instance of Board with tileWidth and tileVisibilityRadius
+const board = new Board(TILE_DEGREES, 1); // Set tileWidth to TILE_DEGREES and radius to 1 (for now)
 
 const map = leaflet.map(document.getElementById("map")!, {
   center: NULL_ISLAND,
@@ -52,16 +56,23 @@ function getCacheKey(i: number, j: number): string {
 
 function spawnCache(i: number, j: number) {
   const origin = NULL_ISLAND;
-  const bounds = leaflet.latLngBounds([
-    [origin.lat + i * TILE_DEGREES, origin.lng + j * TILE_DEGREES],
-    [origin.lat + (i + 1) * TILE_DEGREES, origin.lng + (j + 1) * TILE_DEGREES],
-  ]);
+
+  // Use the Board to get the canonical cell for this point
+  const cell = board.getCellForPoint(
+    leaflet.latLng(
+      origin.lat + i * TILE_DEGREES,
+      origin.lng + j * TILE_DEGREES,
+    ),
+  );
+
+  // Get bounds for the cell
+  const bounds = board.getCellBounds(cell);
 
   const rect = leaflet.rectangle(bounds);
   rect.addTo(map);
 
   // Initialize the coin array for this cache if it doesn't exist
-  const cacheKey = getCacheKey(i, j);
+  const cacheKey = getCacheKey(cell.i, cell.j);
   if (!coinMap.has(cacheKey)) {
     coinMap.set(cacheKey, []);
   }
@@ -70,7 +81,7 @@ function spawnCache(i: number, j: number) {
   if (!cacheCoinValues.has(cacheKey)) {
     cacheCoinValues.set(
       cacheKey,
-      Math.floor(luck([i, j, "initialValue"].toString()) * 100),
+      Math.floor(luck([cell.i, cell.j, "initialValue"].toString()) * 100),
     );
   }
 
@@ -80,7 +91,7 @@ function spawnCache(i: number, j: number) {
 
     const popupDiv = document.createElement("div");
     popupDiv.innerHTML = `
-      <div>Cache at "${i},${j}". Value: <span id="value">${coinValue}</span>.</div>
+      <div>Cache at "${cell.i},${cell.j}". Value: <span id="value">${coinValue}</span>.</div>
       <div>Coins:</div>
       <ul id="coinList">
         ${
@@ -101,7 +112,7 @@ function spawnCache(i: number, j: number) {
           cacheCoinValues.set(cacheKey, coinValue);
 
           // Add a new coin with a unique serial number
-          const newCoin: Coin = { i, j, serial: coins.length };
+          const newCoin: Coin = { i: cell.i, j: cell.j, serial: coins.length };
           coins.push(newCoin);
 
           // Update coin list and display
