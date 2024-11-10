@@ -1,6 +1,6 @@
 import leaflet from "leaflet";
 
-interface Cell {
+export interface Cell {
   readonly i: number;
   readonly j: number;
 }
@@ -18,7 +18,7 @@ export class Board {
   }
 
   // Ensures only one instance of each unique cell is created and stored
-  private getCanonicalCell(cell: Cell): Cell {
+  public getCanonicalCell(cell: Cell): Cell {
     const { i, j } = cell;
     const key = [i, j].toString();
 

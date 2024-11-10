@@ -4,19 +4,23 @@ import "leaflet/dist/leaflet.css";
 import "./style.css";
 import "./leafletWorkaround.ts";
 import luck from "./luck.ts";
-import { Board } from "./board.ts"; // Import the Board class
+import { Board, Cell } from "./board.ts";
 
-const NULL_ISLAND = leaflet.latLng(0, 0);
+// Anchor point at Null Island
+const _NULL_ISLAND = leaflet.latLng(0, 0);
 const TILE_DEGREES = 1e-4;
 const GAMEPLAY_ZOOM_LEVEL = 19;
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
 
-// Create an instance of Board with tileWidth and tileVisibilityRadius
-const board = new Board(TILE_DEGREES, 1); // Set tileWidth to TILE_DEGREES and radius to 1 (for now)
+// Location of Oakes College classroom
+const OAKES_CLASSROOM = leaflet.latLng(36.98949379578401, -122.06277128548504);
+
+// Initialize the board with tile and radius settings
+const board = new Board(TILE_DEGREES, NEIGHBORHOOD_SIZE);
 
 const map = leaflet.map(document.getElementById("map")!, {
-  center: NULL_ISLAND,
+  center: OAKES_CLASSROOM,
   zoom: GAMEPLAY_ZOOM_LEVEL,
   minZoom: GAMEPLAY_ZOOM_LEVEL,
   maxZoom: GAMEPLAY_ZOOM_LEVEL,
@@ -32,7 +36,7 @@ leaflet
   })
   .addTo(map);
 
-const playerMarker = leaflet.marker(NULL_ISLAND);
+const playerMarker = leaflet.marker(OAKES_CLASSROOM);
 playerMarker.bindTooltip("That's you!");
 playerMarker.addTo(map);
 
@@ -40,91 +44,53 @@ let playerCoins = 0;
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 statusPanel.innerHTML = "No coins yet...";
 
-// Store cache coin values and coins per cache in a global map
+// Store cache coin values in a global map
 const cacheCoinValues = new Map<string, number>();
-const coinMap = new Map<string, Coin[]>();
-
-interface Coin {
-  i: number;
-  j: number;
-  serial: number;
-}
+const coinSerials = new Map<string, number>();
 
 function getCacheKey(i: number, j: number): string {
   return `${i},${j}`;
 }
 
 function spawnCache(i: number, j: number) {
-  const origin = NULL_ISLAND;
-
-  // Use the Board to get the canonical cell for this point
-  const cell = board.getCellForPoint(
-    leaflet.latLng(
-      origin.lat + i * TILE_DEGREES,
-      origin.lng + j * TILE_DEGREES,
-    ),
-  );
-
-  // Get bounds for the cell
-  const bounds = board.getCellBounds(cell);
-
+  const bounds = board.getCellBounds({ i, j });
   const rect = leaflet.rectangle(bounds);
   rect.addTo(map);
 
-  // Initialize the coin array for this cache if it doesn't exist
-  const cacheKey = getCacheKey(cell.i, cell.j);
-  if (!coinMap.has(cacheKey)) {
-    coinMap.set(cacheKey, []);
-  }
-
-  // Set initial coin value for the cache if not already set
+  const cacheKey = getCacheKey(i, j);
   if (!cacheCoinValues.has(cacheKey)) {
     cacheCoinValues.set(
       cacheKey,
-      Math.floor(luck([cell.i, cell.j, "initialValue"].toString()) * 100),
+      Math.floor(luck([i, j, "initialValue"].toString()) * 100),
     );
+  }
+  if (!coinSerials.has(cacheKey)) {
+    coinSerials.set(cacheKey, 0);
   }
 
   rect.bindPopup(() => {
     let coinValue = cacheCoinValues.get(cacheKey)!;
-    const coins = coinMap.get(cacheKey)!;
 
     const popupDiv = document.createElement("div");
     popupDiv.innerHTML = `
-      <div>Cache at "${cell.i},${cell.j}". Value: <span id="value">${coinValue}</span>.</div>
-      <div>Coins:</div>
-      <ul id="coinList">
-        ${
-      coins
-        .map((coin) => `<li>${coin.i}:${coin.j}#${coin.serial}</li>`)
-        .join("")
-    }
-      </ul>
-      <button id="collect">Collect Coin</button>
-      <button id="deposit">Deposit Coin</button>`;
+      <div>Cache at "${i},${j}". Value: <span id="value">${coinValue}</span>.</div>
+      <button id="collect">Collect</button>
+      <button id="deposit">Deposit</button>`;
 
     popupDiv.querySelector<HTMLButtonElement>("#collect")!.addEventListener(
       "click",
       () => {
         if (coinValue > 0) {
+          const serial = coinSerials.get(cacheKey)!;
+          const coinId = `${i}:${j}#${serial}`;
+          coinSerials.set(cacheKey, serial + 1);
           coinValue--;
           playerCoins++;
           cacheCoinValues.set(cacheKey, coinValue);
-
-          // Add a new coin with a unique serial number
-          const newCoin: Coin = { i: cell.i, j: cell.j, serial: coins.length };
-          coins.push(newCoin);
-
-          // Update coin list and display
           popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
             coinValue.toString();
-          const coinList = popupDiv.querySelector<HTMLUListElement>(
-            "#coinList",
-          )!;
-          coinList.innerHTML +=
-            `<li>${newCoin.i}:${newCoin.j}#${newCoin.serial}</li>`;
-
-          statusPanel.innerHTML = `${playerCoins} coins accumulated`;
+          statusPanel.innerHTML =
+            `${playerCoins} coins accumulated (Last collected: ${coinId})`;
         }
       },
     );
@@ -147,11 +113,65 @@ function spawnCache(i: number, j: number) {
   });
 }
 
-// Spawn caches around Null Island for a test area
-for (let i = -NEIGHBORHOOD_SIZE; i < NEIGHBORHOOD_SIZE; i++) {
-  for (let j = -NEIGHBORHOOD_SIZE; j < NEIGHBORHOOD_SIZE; j++) {
+// Spawn caches in the vicinity
+const originCell = board.getCellForPoint(OAKES_CLASSROOM);
+for (
+  let i = originCell.i - NEIGHBORHOOD_SIZE;
+  i <= originCell.i + NEIGHBORHOOD_SIZE;
+  i++
+) {
+  for (
+    let j = originCell.j - NEIGHBORHOOD_SIZE;
+    j <= originCell.j + NEIGHBORHOOD_SIZE;
+    j++
+  ) {
     if (luck([i, j].toString()) < CACHE_SPAWN_PROBABILITY) {
       spawnCache(i, j);
     }
   }
 }
+
+// Track player's current cell and position
+let playerCell = board.getCellForPoint(OAKES_CLASSROOM);
+let playerLatLng = board.getCellBounds(playerCell).getCenter();
+
+// Update player marker position and recenter map
+function updatePlayerPosition(cell: Cell) {
+  playerCell = cell;
+  playerLatLng = board.getCellBounds(playerCell).getCenter();
+  playerMarker.setLatLng(playerLatLng);
+  map.setView(playerLatLng);
+}
+
+// Move player in a specified direction
+function movePlayer(di: number, dj: number) {
+  const newCell = board.getCanonicalCell({
+    i: playerCell.i + di,
+    j: playerCell.j + dj,
+  });
+  updatePlayerPosition(newCell);
+}
+
+// Directional button event listeners
+document.getElementById("north")?.addEventListener(
+  "click",
+  () => movePlayer(1, 0),
+);
+document.getElementById("south")?.addEventListener(
+  "click",
+  () => movePlayer(-1, 0),
+);
+document.getElementById("east")?.addEventListener(
+  "click",
+  () => movePlayer(0, 1),
+);
+document.getElementById("west")?.addEventListener(
+  "click",
+  () => movePlayer(0, -1),
+);
+
+// Reset button to return player to the Oakes College classroom
+document.getElementById("reset")?.addEventListener(
+  "click",
+  () => updatePlayerPosition(originCell),
+);
