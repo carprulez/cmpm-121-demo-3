@@ -4,16 +4,18 @@ import "leaflet/dist/leaflet.css";
 import "./style.css";
 import "./leafletWorkaround.ts";
 import luck from "./luck.ts";
-import { Board } from "./board.ts";
+import { Board, Cell } from "./board.ts";
 
-const NULL_ISLAND = leaflet.latLng(0, 0);
+// Coordinates for the Oakes College classroom
+const OAKES_COLLEGE_LAT = 36.98949379578401;
+const OAKES_COLLEGE_LNG = -122.06277128548504;
 const TILE_DEGREES = 1e-4;
 const GAMEPLAY_ZOOM_LEVEL = 19;
-const NEIGHBORHOOD_SIZE = 8; // Radius of cells around the player to spawn caches
+const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
 
 const map = leaflet.map(document.getElementById("map")!, {
-  center: NULL_ISLAND,
+  center: [OAKES_COLLEGE_LAT, OAKES_COLLEGE_LNG],
   zoom: GAMEPLAY_ZOOM_LEVEL,
   minZoom: GAMEPLAY_ZOOM_LEVEL,
   maxZoom: GAMEPLAY_ZOOM_LEVEL,
@@ -29,7 +31,7 @@ leaflet
   })
   .addTo(map);
 
-const playerMarker = leaflet.marker(NULL_ISLAND);
+const playerMarker = leaflet.marker([OAKES_COLLEGE_LAT, OAKES_COLLEGE_LNG]);
 playerMarker.bindTooltip("That's you!");
 playerMarker.addTo(map);
 
@@ -38,35 +40,64 @@ const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 statusPanel.innerHTML = "No coins yet...";
 
 const board = new Board(TILE_DEGREES, NEIGHBORHOOD_SIZE);
-let currentPlayerCell = board.getCellForPoint(NULL_ISLAND);
+const _cacheCoinValues = new Map<string, number>();
 
-// Store cache coin values in a global map
-const cacheCoinValues = new Map<string, number>();
-// Store cache markers on the map for clearing when the player moves
-let activeCacheMarkers: leaflet.Layer[] = [];
+interface Memento<T> {
+  toMemento(): T;
+  fromMemento(memento: T): void;
+}
 
-// Generate cache at specific cell location
-function spawnCache(i: number, j: number) {
-  const cell = board.getCanonicalCell({ i, j });
-  const bounds = board.getCellBounds(cell);
+class Geocache implements Memento<string> {
+  i: number;
+  j: number;
+  numCoins: number;
+  serial: number;
 
-  const rect = leaflet.rectangle(bounds);
-  activeCacheMarkers.push(rect); // Track the cache marker for easy clearing
-  rect.addTo(map);
-
-  const cacheKey = `${i},${j}`;
-  if (!cacheCoinValues.has(cacheKey)) {
-    cacheCoinValues.set(
-      cacheKey,
-      Math.floor(luck([i, j, "initialValue"].toString()) * 100),
-    );
+  constructor(i: number, j: number, numCoins: number, serial: number) {
+    this.i = i;
+    this.j = j;
+    this.numCoins = numCoins;
+    this.serial = serial;
   }
 
+  toMemento(): string {
+    return JSON.stringify({ numCoins: this.numCoins });
+  }
+
+  fromMemento(memento: string): void {
+    const data = JSON.parse(memento);
+    this.numCoins = data.numCoins;
+  }
+}
+
+// Map to store caches with unique serials
+const cacheMap = new Map<string, Geocache>();
+
+function getCacheKey(i: number, j: number): string {
+  return `${i},${j}`;
+}
+
+function spawnCache(cell: Cell) {
+  const cacheKey = getCacheKey(cell.i, cell.j);
+  if (!cacheMap.has(cacheKey)) {
+    const numCoins = Math.floor(
+      luck([cell.i, cell.j, "initialValue"].toString()) * 100,
+    );
+    const cache = new Geocache(cell.i, cell.j, numCoins, cacheMap.size);
+    cacheMap.set(cacheKey, cache);
+  }
+
+  const cache = cacheMap.get(cacheKey)!;
+  const bounds = board.getCellBounds(cell);
+  const rect = leaflet.rectangle(bounds);
+  rect.addTo(map);
+
   rect.bindPopup(() => {
-    let coinValue = cacheCoinValues.get(cacheKey)!;
+    let coinValue = cache.numCoins;
+
     const popupDiv = document.createElement("div");
     popupDiv.innerHTML = `
-                <div>Cache at "${i},${j}". Value: <span id="value">${coinValue}</span>.</div>
+                <div>Cache at "${cell.i},${cell.j}". Value: <span id="value">${coinValue}</span>.</div>
                 <button id="collect">Collect</button>
                 <button id="deposit">Deposit</button>`;
 
@@ -76,7 +107,7 @@ function spawnCache(i: number, j: number) {
         if (coinValue > 0) {
           coinValue--;
           playerCoins++;
-          cacheCoinValues.set(cacheKey, coinValue);
+          cache.numCoins = coinValue;
           popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
             coinValue.toString();
           statusPanel.innerHTML = `${playerCoins} coins accumulated`;
@@ -90,7 +121,7 @@ function spawnCache(i: number, j: number) {
         if (playerCoins > 0) {
           coinValue++;
           playerCoins--;
-          cacheCoinValues.set(cacheKey, coinValue);
+          cache.numCoins = coinValue;
           popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
             coinValue.toString();
           statusPanel.innerHTML = `${playerCoins} coins accumulated`;
@@ -102,64 +133,46 @@ function spawnCache(i: number, j: number) {
   });
 }
 
-// Clear all existing cache markers
-function clearCaches() {
-  activeCacheMarkers.forEach((marker) => map.removeLayer(marker));
-  activeCacheMarkers = [];
-}
+function updateVisibleCaches() {
+  map.eachLayer((layer) => {
+    if (layer instanceof leaflet.Rectangle) {
+      map.removeLayer(layer);
+    }
+  });
 
-// Spawn caches around the player's cell within the neighborhood size
-function updateCachesAroundPlayer() {
-  clearCaches();
-  const cellsNearby = board.getCellsNearPoint(playerMarker.getLatLng());
-  cellsNearby.forEach((cell) => {
-    if (luck(`${cell.i},${cell.j}`) < CACHE_SPAWN_PROBABILITY) {
-      spawnCache(cell.i, cell.j);
+  const nearbyCells = board.getCellsNearPoint(playerMarker.getLatLng());
+  nearbyCells.forEach((cell) => {
+    if (luck([cell.i, cell.j].toString()) < CACHE_SPAWN_PROBABILITY) {
+      spawnCache(cell);
     }
   });
 }
 
-// Update player position and refresh nearby caches
 function movePlayer(di: number, dj: number) {
-  const newPlayerCell = board.getCanonicalCell({
-    i: currentPlayerCell.i + di,
-    j: currentPlayerCell.j + dj,
-  });
+  const currentCell = board.getCellForPoint(playerMarker.getLatLng());
+  const newCell = { i: currentCell.i - di, j: currentCell.j - dj }; // Flip signs here to adjust the direction
+  const newLatLng = board.getCellBounds(newCell).getCenter();
 
-  if (newPlayerCell !== currentPlayerCell) {
-    currentPlayerCell = newPlayerCell;
-    const newPlayerLatLng = board.getCellBounds(newPlayerCell).getCenter();
-    playerMarker.setLatLng(newPlayerLatLng);
-    map.panTo(newPlayerLatLng);
-    updateCachesAroundPlayer();
-  }
+  playerMarker.setLatLng(newLatLng);
+  map.setView(newLatLng, GAMEPLAY_ZOOM_LEVEL);
+  updateVisibleCaches();
 }
 
-// Event listeners for movement buttons
 document.getElementById("north")!.addEventListener(
-  "click",
-  () => movePlayer(1, 0),
-);
-document.getElementById("south")!.addEventListener(
   "click",
   () => movePlayer(-1, 0),
 );
-document.getElementById("east")!.addEventListener(
+document.getElementById("south")!.addEventListener(
   "click",
-  () => movePlayer(0, 1),
+  () => movePlayer(1, 0),
 );
 document.getElementById("west")!.addEventListener(
   "click",
+  () => movePlayer(0, 1),
+);
+document.getElementById("east")!.addEventListener(
+  "click",
   () => movePlayer(0, -1),
 );
-document.getElementById("reset")!.addEventListener("click", () => {
-  currentPlayerCell = board.getCellForPoint(NULL_ISLAND);
-  playerMarker.setLatLng(NULL_ISLAND);
-  map.panTo(NULL_ISLAND);
-  playerCoins = 0;
-  statusPanel.innerHTML = "No coins yet...";
-  updateCachesAroundPlayer();
-});
 
-// Initial cache spawn around starting position
-updateCachesAroundPlayer();
+updateVisibleCaches();
