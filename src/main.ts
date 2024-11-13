@@ -253,4 +253,24 @@ function loadPlayerState() {
   }
 }
 
-loadPlayerState(); // Load saved state when the page loads
+// Reset the game state when the 🚮 button is pressed
+const resetButton = document.getElementById("reset")!;
+resetButton.addEventListener("click", () => {
+  const confirmation = prompt(
+    "Are you sure you want to reset the game? All progress will be erased.",
+  );
+  if (confirmation?.toLowerCase() === "yes") {
+    // Clear game state
+    playerCoins = 0;
+    movementHistory.length = 0;
+    movementPolyline.setLatLngs([]);
+    clearActiveCaches();
+    cacheMementos.clear();
+    updatePlayerPosition(NULL_ISLAND.lat, NULL_ISLAND.lng); // Reset player position
+    statusPanel.innerHTML = "No coins yet...";
+    localStorage.removeItem("playerState"); // Remove saved state
+  }
+});
+
+// Load saved state when the page loads
+loadPlayerState();
