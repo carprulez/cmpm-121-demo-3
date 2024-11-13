@@ -4,18 +4,16 @@ import "leaflet/dist/leaflet.css";
 import "./style.css";
 import "./leafletWorkaround.ts";
 import luck from "./luck.ts";
-import { Board, Cell } from "./board.ts";
+import { Board } from "./board.ts";
 
-// Coordinates for the Oakes College classroom
-const OAKES_COLLEGE_LAT = 36.98949379578401;
-const OAKES_COLLEGE_LNG = -122.06277128548504;
+const NULL_ISLAND = leaflet.latLng(0, 0);
 const TILE_DEGREES = 1e-4;
 const GAMEPLAY_ZOOM_LEVEL = 19;
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
 
 const map = leaflet.map(document.getElementById("map")!, {
-  center: [OAKES_COLLEGE_LAT, OAKES_COLLEGE_LNG],
+  center: NULL_ISLAND,
   zoom: GAMEPLAY_ZOOM_LEVEL,
   minZoom: GAMEPLAY_ZOOM_LEVEL,
   maxZoom: GAMEPLAY_ZOOM_LEVEL,
@@ -31,7 +29,8 @@ leaflet
   })
   .addTo(map);
 
-const playerMarker = leaflet.marker([OAKES_COLLEGE_LAT, OAKES_COLLEGE_LNG]);
+const board = new Board(TILE_DEGREES, NEIGHBORHOOD_SIZE);
+const playerMarker = leaflet.marker(NULL_ISLAND);
 playerMarker.bindTooltip("That's you!");
 playerMarker.addTo(map);
 
@@ -39,77 +38,72 @@ let playerCoins = 0;
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 statusPanel.innerHTML = "No coins yet...";
 
-const board = new Board(TILE_DEGREES, NEIGHBORHOOD_SIZE);
-const _cacheCoinValues = new Map<string, number>();
+// Cache coin values storage
+const cacheCoinValues = new Map<string, number>();
 
-interface Memento<T> {
-  toMemento(): T;
-  fromMemento(memento: T): void;
+// Geolocation toggle button
+const sensorButton = document.getElementById("sensor")!;
+let geolocationWatchId: number | null = null;
+
+function updatePlayerPosition(newLat: number, newLng: number) {
+  const playerLocation = leaflet.latLng(newLat, newLng);
+  map.setView(playerLocation, GAMEPLAY_ZOOM_LEVEL);
+  playerMarker.setLatLng(playerLocation);
+
+  spawnVisibleCaches(playerLocation);
 }
 
-class Geocache implements Memento<string> {
-  i: number;
-  j: number;
-  numCoins: number;
-  serial: number;
-
-  constructor(i: number, j: number, numCoins: number, serial: number) {
-    this.i = i;
-    this.j = j;
-    this.numCoins = numCoins;
-    this.serial = serial;
-  }
-
-  toMemento(): string {
-    return JSON.stringify({ numCoins: this.numCoins });
-  }
-
-  fromMemento(memento: string): void {
-    const data = JSON.parse(memento);
-    this.numCoins = data.numCoins;
-  }
-}
-
-// Map to store caches with unique serials
-const cacheMap = new Map<string, Geocache>();
-
-function getCacheKey(i: number, j: number): string {
-  return `${i},${j}`;
-}
-
-function spawnCache(cell: Cell) {
-  const cacheKey = getCacheKey(cell.i, cell.j);
-  if (!cacheMap.has(cacheKey)) {
-    const numCoins = Math.floor(
-      luck([cell.i, cell.j, "initialValue"].toString()) * 100,
+// Geolocation activation when 🌐 button is pressed
+sensorButton.addEventListener("click", () => {
+  if (geolocationWatchId !== null) {
+    // Stop tracking if already tracking
+    navigator.geolocation.clearWatch(geolocationWatchId);
+    geolocationWatchId = null;
+    sensorButton.innerText = "🌐"; // Reset button state
+  } else {
+    // Start tracking player position
+    geolocationWatchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        updatePlayerPosition(latitude, longitude);
+      },
+      (error) => {
+        console.error("Geolocation error:", error);
+      },
+      { enableHighAccuracy: true },
     );
-    const cache = new Geocache(cell.i, cell.j, numCoins, cacheMap.size);
-    cacheMap.set(cacheKey, cache);
+    sensorButton.innerText = "🛑"; // Update button to indicate tracking is active
   }
+});
 
-  const cache = cacheMap.get(cacheKey)!;
-  const bounds = board.getCellBounds(cell);
+// Spawning and displaying cache on the map
+function spawnCache(i: number, j: number) {
+  const cacheCell = board.getCanonicalCell({ i, j });
+  const bounds = board.getCellBounds(cacheCell);
+
   const rect = leaflet.rectangle(bounds);
   rect.addTo(map);
 
-  rect.bindPopup(() => {
-    let coinValue = cache.numCoins;
+  const cacheKey = `${i}:${j}`;
+  const coinValue = Math.floor(luck([i, j, "initialValue"].toString()) * 100);
+  cacheCoinValues.set(cacheKey, coinValue);
 
+  rect.bindPopup(() => {
     const popupDiv = document.createElement("div");
     popupDiv.innerHTML = `
-                <div>Cache at "${cell.i},${cell.j}". Value: <span id="value">${coinValue}</span>.</div>
-                <button id="collect">Collect</button>
-                <button id="deposit">Deposit</button>`;
+      <div>Cache at "${i}:${j}". Value: <span id="value">${coinValue}</span>.</div>
+      <button id="collect">Collect</button>
+      <button id="deposit">Deposit</button>`;
 
     popupDiv.querySelector<HTMLButtonElement>("#collect")!.addEventListener(
       "click",
       () => {
-        if (coinValue > 0) {
-          coinValue--;
+        const currentValue = cacheCoinValues.get(cacheKey) || 0;
+        if (currentValue > 0) {
           playerCoins++;
-          cache.numCoins = coinValue;
+          cacheCoinValues.set(cacheKey, currentValue - 1);
           popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-            coinValue.toString();
+            (currentValue - 1).toString();
           statusPanel.innerHTML = `${playerCoins} coins accumulated`;
         }
       },
@@ -118,12 +112,12 @@ function spawnCache(cell: Cell) {
     popupDiv.querySelector<HTMLButtonElement>("#deposit")!.addEventListener(
       "click",
       () => {
+        const currentValue = cacheCoinValues.get(cacheKey) || 0;
         if (playerCoins > 0) {
-          coinValue++;
           playerCoins--;
-          cache.numCoins = coinValue;
+          cacheCoinValues.set(cacheKey, currentValue + 1);
           popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-            coinValue.toString();
+            (currentValue + 1).toString();
           statusPanel.innerHTML = `${playerCoins} coins accumulated`;
         }
       },
@@ -133,46 +127,47 @@ function spawnCache(cell: Cell) {
   });
 }
 
-function updateVisibleCaches() {
-  map.eachLayer((layer) => {
-    if (layer instanceof leaflet.Rectangle) {
-      map.removeLayer(layer);
-    }
-  });
-
-  const nearbyCells = board.getCellsNearPoint(playerMarker.getLatLng());
-  nearbyCells.forEach((cell) => {
-    if (luck([cell.i, cell.j].toString()) < CACHE_SPAWN_PROBABILITY) {
-      spawnCache(cell);
+// Spawning caches near the player
+function spawnVisibleCaches(playerLocation: leaflet.LatLng) {
+  const visibleCells = board.getCellsNearPoint(playerLocation);
+  visibleCells.forEach((cell) => {
+    const cacheKey = `${cell.i}:${cell.j}`;
+    if (
+      !cacheCoinValues.has(cacheKey) &&
+      luck([cell.i, cell.j].toString()) < CACHE_SPAWN_PROBABILITY
+    ) {
+      spawnCache(cell.i, cell.j);
     }
   });
 }
 
-function movePlayer(di: number, dj: number) {
-  const currentCell = board.getCellForPoint(playerMarker.getLatLng());
-  const newCell = { i: currentCell.i - di, j: currentCell.j - dj }; // Flip signs here to adjust the direction
-  const newLatLng = board.getCellBounds(newCell).getCenter();
+// Manual player movement with arrow buttons
+const directionButtons = {
+  north: document.getElementById("north")!,
+  south: document.getElementById("south")!,
+  east: document.getElementById("east")!,
+  west: document.getElementById("west")!,
+};
 
-  playerMarker.setLatLng(newLatLng);
-  map.setView(newLatLng, GAMEPLAY_ZOOM_LEVEL);
-  updateVisibleCaches();
-}
+let playerLat = 36.98949379578401;
+let playerLng = -122.06277128548504;
 
-document.getElementById("north")!.addEventListener(
-  "click",
-  () => movePlayer(-1, 0),
-);
-document.getElementById("south")!.addEventListener(
-  "click",
-  () => movePlayer(1, 0),
-);
-document.getElementById("west")!.addEventListener(
-  "click",
-  () => movePlayer(0, 1),
-);
-document.getElementById("east")!.addEventListener(
-  "click",
-  () => movePlayer(0, -1),
-);
+directionButtons.north.addEventListener("click", () => {
+  playerLat += TILE_DEGREES;
+  updatePlayerPosition(playerLat, playerLng);
+});
+directionButtons.south.addEventListener("click", () => {
+  playerLat -= TILE_DEGREES;
+  updatePlayerPosition(playerLat, playerLng);
+});
+directionButtons.east.addEventListener("click", () => {
+  playerLng += TILE_DEGREES;
+  updatePlayerPosition(playerLat, playerLng);
+});
+directionButtons.west.addEventListener("click", () => {
+  playerLng -= TILE_DEGREES;
+  updatePlayerPosition(playerLat, playerLng);
+});
 
-updateVisibleCaches();
+// Initialize player at Oakes College classroom location
+updatePlayerPosition(playerLat, playerLng);
