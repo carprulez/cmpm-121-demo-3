@@ -54,6 +54,14 @@ let geolocationWatchId: number | null = null;
 let playerLat = 36.98949379578401;
 let playerLng = -122.06277128548504;
 
+// Polyline to track the player's movement history
+const movementHistory: leaflet.LatLng[] = []; // Store positions for polyline
+const movementPolyline = leaflet.polyline(movementHistory, {
+  color: "pink",
+  weight: 6,
+  opacity: 1,
+}).addTo(map);
+
 function updatePlayerPosition(newLat: number, newLng: number) {
   playerLat = newLat;
   playerLng = newLng;
@@ -62,8 +70,15 @@ function updatePlayerPosition(newLat: number, newLng: number) {
   map.setView(playerLocation, GAMEPLAY_ZOOM_LEVEL);
   playerMarker.setLatLng(playerLocation);
 
+  // Add new position to movement history
+  movementHistory.push(playerLocation);
+  movementPolyline.setLatLngs(movementHistory); // Update the polyline
+
   clearActiveCaches();
   spawnVisibleCaches(playerLocation);
+
+  // Save player state to localStorage
+  savePlayerState();
 }
 
 // Geolocation activation when 🌐 button is pressed
@@ -132,6 +147,7 @@ function spawnCache(i: number, j: number) {
           popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
             coinValue.toString();
           statusPanel.innerHTML = `${playerCoins} coins accumulated`;
+          savePlayerState(); // Save state after collecting coins
         }
       },
     );
@@ -146,6 +162,7 @@ function spawnCache(i: number, j: number) {
           popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
             coinValue.toString();
           statusPanel.innerHTML = `${playerCoins} coins accumulated`;
+          savePlayerState(); // Save state after depositing coins
         }
       },
     );
@@ -195,3 +212,45 @@ directionButtons.west.addEventListener("click", () => {
 
 // Initialize player at Oakes College classroom location
 updatePlayerPosition(playerLat, playerLng);
+
+// Persistent storage functions
+function savePlayerState() {
+  const playerState = {
+    playerLat,
+    playerLng,
+    playerCoins,
+    cacheMementos: Array.from(cacheMementos.entries()),
+    movementHistory: movementHistory.map((latLng) => [latLng.lat, latLng.lng]), // Save latLng points
+  };
+  localStorage.setItem("playerState", JSON.stringify(playerState));
+}
+
+function loadPlayerState() {
+  const savedState = localStorage.getItem("playerState");
+  if (savedState) {
+    const {
+      playerLat: lat,
+      playerLng: lng,
+      playerCoins: coins,
+      cacheMementos: mementos,
+      movementHistory,
+    } = JSON.parse(savedState);
+    playerLat = lat;
+    playerLng = lng;
+    playerCoins = coins;
+    cacheMementos.clear();
+    mementos.forEach(([key, value]: [string, CacheMemento]) => {
+      cacheMementos.set(key, value);
+    });
+
+    movementHistory.forEach(([lat, lng]: [number, number]) => {
+      const position = leaflet.latLng(lat, lng);
+      movementHistory.push(position);
+    });
+
+    movementPolyline.setLatLngs(movementHistory); // Restore polyline with movement history
+    updatePlayerPosition(playerLat, playerLng); // Update player position and center map
+  }
+}
+
+loadPlayerState(); // Load saved state when the page loads
