@@ -38,31 +38,42 @@ let playerCoins = 0;
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 statusPanel.innerHTML = "No coins yet...";
 
-// Cache coin values storage
-const cacheCoinValues = new Map<string, number>();
+// Cache state storage using Memento pattern
+interface CacheMemento {
+  value: number;
+  hasCache: boolean;
+}
+
+const cacheMementos = new Map<string, CacheMemento>();
+const activeCaches = new Map<string, leaflet.Rectangle>();
 
 // Geolocation toggle button
 const sensorButton = document.getElementById("sensor")!;
 let geolocationWatchId: number | null = null;
 
+let playerLat = 36.98949379578401;
+let playerLng = -122.06277128548504;
+
 function updatePlayerPosition(newLat: number, newLng: number) {
+  playerLat = newLat;
+  playerLng = newLng;
+
   const playerLocation = leaflet.latLng(newLat, newLng);
   map.setView(playerLocation, GAMEPLAY_ZOOM_LEVEL);
   playerMarker.setLatLng(playerLocation);
 
+  clearActiveCaches();
   spawnVisibleCaches(playerLocation);
 }
 
 // Geolocation activation when 🌐 button is pressed
 sensorButton.addEventListener("click", () => {
   if (geolocationWatchId !== null) {
-    // Stop tracking if already tracking
     navigator.geolocation.clearWatch(geolocationWatchId);
     geolocationWatchId = null;
-    sensorButton.innerText = "🌐"; // Reset button state
+    sensorButton.innerText = "🌐";
   } else {
-    // Start tracking player position
-    geolocationWatchId = navigator.geolocation.watchPosition(
+    navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
         updatePlayerPosition(latitude, longitude);
@@ -72,21 +83,37 @@ sensorButton.addEventListener("click", () => {
       },
       { enableHighAccuracy: true },
     );
-    sensorButton.innerText = "🛑"; // Update button to indicate tracking is active
   }
 });
+
+function createCacheMemento(i: number, j: number, value: number) {
+  cacheMementos.set(`${i}:${j}`, { value, hasCache: true });
+}
+
+function restoreCacheFromMemento(i: number, j: number): number | null {
+  const memento = cacheMementos.get(`${i}:${j}`);
+  return memento && memento.hasCache ? memento.value : null;
+}
+
+// Remove all active caches from the map
+function clearActiveCaches() {
+  activeCaches.forEach((cache) => map.removeLayer(cache));
+  activeCaches.clear();
+}
 
 // Spawning and displaying cache on the map
 function spawnCache(i: number, j: number) {
   const cacheCell = board.getCanonicalCell({ i, j });
   const bounds = board.getCellBounds(cacheCell);
+  const cacheKey = `${i}:${j}`;
+
+  let coinValue = restoreCacheFromMemento(i, j) ??
+    Math.floor(luck([i, j, "initialValue"].toString()) * 100);
+  createCacheMemento(i, j, coinValue); // Save this value to the memento in case it’s new
 
   const rect = leaflet.rectangle(bounds);
   rect.addTo(map);
-
-  const cacheKey = `${i}:${j}`;
-  const coinValue = Math.floor(luck([i, j, "initialValue"].toString()) * 100);
-  cacheCoinValues.set(cacheKey, coinValue);
+  activeCaches.set(cacheKey, rect);
 
   rect.bindPopup(() => {
     const popupDiv = document.createElement("div");
@@ -98,12 +125,12 @@ function spawnCache(i: number, j: number) {
     popupDiv.querySelector<HTMLButtonElement>("#collect")!.addEventListener(
       "click",
       () => {
-        const currentValue = cacheCoinValues.get(cacheKey) || 0;
-        if (currentValue > 0) {
+        if (coinValue > 0) {
           playerCoins++;
-          cacheCoinValues.set(cacheKey, currentValue - 1);
+          coinValue--;
+          cacheMementos.set(cacheKey, { value: coinValue, hasCache: true });
           popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-            (currentValue - 1).toString();
+            coinValue.toString();
           statusPanel.innerHTML = `${playerCoins} coins accumulated`;
         }
       },
@@ -112,12 +139,12 @@ function spawnCache(i: number, j: number) {
     popupDiv.querySelector<HTMLButtonElement>("#deposit")!.addEventListener(
       "click",
       () => {
-        const currentValue = cacheCoinValues.get(cacheKey) || 0;
         if (playerCoins > 0) {
           playerCoins--;
-          cacheCoinValues.set(cacheKey, currentValue + 1);
+          coinValue++;
+          cacheMementos.set(cacheKey, { value: coinValue, hasCache: true });
           popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-            (currentValue + 1).toString();
+            coinValue.toString();
           statusPanel.innerHTML = `${playerCoins} coins accumulated`;
         }
       },
@@ -133,7 +160,7 @@ function spawnVisibleCaches(playerLocation: leaflet.LatLng) {
   visibleCells.forEach((cell) => {
     const cacheKey = `${cell.i}:${cell.j}`;
     if (
-      !cacheCoinValues.has(cacheKey) &&
+      !activeCaches.has(cacheKey) &&
       luck([cell.i, cell.j].toString()) < CACHE_SPAWN_PROBABILITY
     ) {
       spawnCache(cell.i, cell.j);
@@ -148,9 +175,6 @@ const directionButtons = {
   east: document.getElementById("east")!,
   west: document.getElementById("west")!,
 };
-
-let playerLat = 36.98949379578401;
-let playerLng = -122.06277128548504;
 
 directionButtons.north.addEventListener("click", () => {
   playerLat += TILE_DEGREES;
