@@ -12,6 +12,9 @@ const GAMEPLAY_ZOOM_LEVEL = 19;
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
 
+const OAKES_COLLEGE_LAT = 36.98949379578401;
+const OAKES_COLLEGE_LNG = -122.06277128548504;
+
 const map = leaflet.map(document.getElementById("map")!, {
   center: NULL_ISLAND,
   zoom: GAMEPLAY_ZOOM_LEVEL,
@@ -51,8 +54,8 @@ const activeCaches = new Map<string, leaflet.Rectangle>();
 const sensorButton = document.getElementById("sensor")!;
 let geolocationWatchId: number | null = null;
 
-let playerLat = 36.98949379578401;
-let playerLng = -122.06277128548504;
+let playerLat = OAKES_COLLEGE_LAT;
+let playerLng = OAKES_COLLEGE_LNG;
 
 // Polyline to track the player's movement history
 const movementHistory: leaflet.LatLng[] = []; // Store positions for polyline
@@ -257,16 +260,16 @@ function loadPlayerState() {
 const resetButton = document.getElementById("reset")!;
 resetButton.addEventListener("click", () => {
   const confirmation = prompt(
-    "Are you sure you want to reset the game? All progress will be erased.",
+    "Are you sure you want to reset the game? All progress will be erased. (y/n)",
   );
-  if (confirmation?.toLowerCase() === "yes") {
+  if (confirmation?.toLowerCase() === "y") {
     // Clear game state
     playerCoins = 0;
     movementHistory.length = 0;
     movementPolyline.setLatLngs([]);
     clearActiveCaches();
     cacheMementos.clear();
-    updatePlayerPosition(NULL_ISLAND.lat, NULL_ISLAND.lng); // Reset player position
+    updatePlayerPosition(OAKES_COLLEGE_LAT, OAKES_COLLEGE_LNG); // Reset to Oakes College
     statusPanel.innerHTML = "No coins yet...";
     localStorage.removeItem("playerState"); // Remove saved state
   }
