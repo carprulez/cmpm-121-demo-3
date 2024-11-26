@@ -65,6 +65,77 @@ const movementPolyline = leaflet.polyline(movementHistory, {
   opacity: 1,
 }).addTo(map);
 
+function initializeCache(i: number, j: number): number {
+  const existingValue = restoreCacheFromMemento(i, j);
+  if (existingValue !== null) return existingValue;
+
+  const newValue = Math.floor(luck([i, j, "initialValue"].toString()) * 100);
+  createCacheMemento(i, j, newValue);
+  return newValue;
+}
+
+function createCachePopup(cacheKey: string, coinValue: number): HTMLElement {
+  const popupDiv = document.createElement("div");
+  popupDiv.innerHTML = `
+    <div>Cache at "${cacheKey}". Value: <span id="value">${coinValue}</span>.</div>
+    <button id="collect">Collect</button>
+    <button id="deposit">Deposit</button>`;
+
+  popupDiv.querySelector<HTMLButtonElement>("#collect")!.addEventListener(
+    "click",
+    () => {
+      if (coinValue > 0) {
+        playerCoins++;
+        coinValue--;
+        cacheMementos.set(cacheKey, { value: coinValue, hasCache: true });
+        popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML = coinValue
+          .toString();
+        statusPanel.innerHTML = `${playerCoins} coins accumulated`;
+        savePlayerState();
+      }
+    },
+  );
+
+  popupDiv.querySelector<HTMLButtonElement>("#deposit")!.addEventListener(
+    "click",
+    () => {
+      if (playerCoins > 0) {
+        playerCoins--;
+        coinValue++;
+        cacheMementos.set(cacheKey, { value: coinValue, hasCache: true });
+        popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML = coinValue
+          .toString();
+        statusPanel.innerHTML = `${playerCoins} coins accumulated`;
+        savePlayerState();
+      }
+    },
+  );
+
+  return popupDiv;
+}
+
+function createCacheRectangle(
+  bounds: leaflet.LatLngBounds,
+  popupContent: HTMLElement,
+) {
+  const rectangle = leaflet.rectangle(bounds);
+  rectangle.bindPopup(popupContent);
+  rectangle.addTo(map);
+  return rectangle;
+}
+
+function spawnCache(i: number, j: number) {
+  const cacheCell = board.getCanonicalCell({ i, j });
+  const bounds = board.getCellBounds(cacheCell);
+  const cacheKey = `${i}:${j}`;
+
+  const coinValue = initializeCache(i, j);
+  const popupContent = createCachePopup(cacheKey, coinValue);
+  const rectangle = createCacheRectangle(bounds, popupContent);
+
+  activeCaches.set(cacheKey, rectangle);
+}
+
 function updatePlayerPosition(newLat: number, newLng: number) {
   playerLat = newLat;
   playerLng = newLng;
@@ -117,61 +188,6 @@ function restoreCacheFromMemento(i: number, j: number): number | null {
 function clearActiveCaches() {
   activeCaches.forEach((cache) => map.removeLayer(cache));
   activeCaches.clear();
-}
-
-// Spawning and displaying cache on the map
-function spawnCache(i: number, j: number) {
-  const cacheCell = board.getCanonicalCell({ i, j });
-  const bounds = board.getCellBounds(cacheCell);
-  const cacheKey = `${i}:${j}`;
-
-  let coinValue = restoreCacheFromMemento(i, j) ??
-    Math.floor(luck([i, j, "initialValue"].toString()) * 100);
-  createCacheMemento(i, j, coinValue); // Save this value to the memento in case it’s new
-
-  const rect = leaflet.rectangle(bounds);
-  rect.addTo(map);
-  activeCaches.set(cacheKey, rect);
-
-  rect.bindPopup(() => {
-    const popupDiv = document.createElement("div");
-    popupDiv.innerHTML = `
-      <div>Cache at "${i}:${j}". Value: <span id="value">${coinValue}</span>.</div>
-      <button id="collect">Collect</button>
-      <button id="deposit">Deposit</button>`;
-
-    popupDiv.querySelector<HTMLButtonElement>("#collect")!.addEventListener(
-      "click",
-      () => {
-        if (coinValue > 0) {
-          playerCoins++;
-          coinValue--;
-          cacheMementos.set(cacheKey, { value: coinValue, hasCache: true });
-          popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-            coinValue.toString();
-          statusPanel.innerHTML = `${playerCoins} coins accumulated`;
-          savePlayerState(); // Save state after collecting coins
-        }
-      },
-    );
-
-    popupDiv.querySelector<HTMLButtonElement>("#deposit")!.addEventListener(
-      "click",
-      () => {
-        if (playerCoins > 0) {
-          playerCoins--;
-          coinValue++;
-          cacheMementos.set(cacheKey, { value: coinValue, hasCache: true });
-          popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-            coinValue.toString();
-          statusPanel.innerHTML = `${playerCoins} coins accumulated`;
-          savePlayerState(); // Save state after depositing coins
-        }
-      },
-    );
-
-    return popupDiv;
-  });
 }
 
 // Spawning caches near the player
